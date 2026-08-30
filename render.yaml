@@ -1,0 +1,94 @@
+# Render Blueprint (render.yaml)
+# ---------------------------------
+# Deploys the whole backend stack from ONE file — no terminal needed.
+# On Render: New -> Blueprint -> connect this GitHub repo -> Render
+# reads this file and creates all services automatically.
+#
+# After first deploy, go to each service's "Environment" tab on
+# Render's website and fill in the secrets marked sync: false below
+# (GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, TOKEN_ENCRYPTION_KEY, etc.)
+
+databases:
+  - name: debtrix-db
+    plan: free
+    databaseName: debtrix
+    user: debtrix
+
+services:
+  # ---- Redis (job queue) ----
+  - type: redis
+    name: debtrix-redis
+    plan: free
+    ipAllowList: []
+
+  # ---- FastAPI backend API ----
+  - type: web
+    name: debtrix-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: "pip install -r requirements.txt && alembic upgrade head"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: debtrix-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: debtrix-redis
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: TOKEN_ENCRYPTION_KEY
+        sync: false   # fill in manually on Render dashboard — see backend/README.md
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_OAUTH_REDIRECT_URI
+        sync: false   # e.g. https://debtrix-api.onrender.com/api/auth/github/callback
+      - key: FRONTEND_URL
+        sync: false   # e.g. https://debtrix.vercel.app
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "1440"
+      - key: CLONE_TMP_DIR
+        value: "/tmp/debtrix_scans"
+
+  # ---- Background scan worker (separate always-on process) ----
+  - type: worker
+    name: debtrix-worker
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python -m app.workers.worker_entry"
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: debtrix-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: debtrix-redis
+          property: connectionString
+      - key: SECRET_KEY
+        sync: false   # must match debtrix-api's SECRET_KEY
+      - key: TOKEN_ENCRYPTION_KEY
+        sync: false   # must match debtrix-api's TOKEN_ENCRYPTION_KEY
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_OAUTH_REDIRECT_URI
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: CLONE_TMP_DIR
+        value: "/tmp/debtrix_scans"
